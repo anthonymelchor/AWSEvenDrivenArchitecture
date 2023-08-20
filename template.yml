@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Event-Driven Architecture Template
+
+Resources:
+  # Create S3 Bucket for Secure Order Uploads
+  SecureOrderUploadsBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: secure-order-uploads-bucket
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BucketPolicy:
+        # Define bucket policy for access control
+
+  # Create Amazon SQS Queue for Reliable Order Processing
+  OrderProcessingQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: order-processing-queue
+      FifoQueue: true
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - OrderProcessingQueueDLQ
+            - Arn
+        maxReceiveCount: 5
+
+  # Create Dead Letter Queue (DLQ) for Order Processing Queue
+  OrderProcessingQueueDLQ:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: order-processing-queue-dlq
+      FifoQueue: true
+
+  # Create Lambda Function for Order Processing
+  OrderProcessingFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: order-processing-function
+      Handler: index.handler
+      Role: !GetAtt OrderProcessingFunctionRole.Arn
+      Code:
+        S3Bucket: my-lambda-code-bucket
+        S3Key: lambda-code.zip
+      Runtime: python3.8
+      Timeout: 30
+
+  # Define IAM Role for Lambda Function
+  OrderProcessingFunctionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: order-processing-function-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'sqs:SendMessage'
+                Resource: !GetAtt OrderProcessingQueue.Arn
+              # Define other necessary permissions
+
+  # Create DynamoDB Table for Resilient Inventory Management
+  InventoryTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: inventory-table
+      AttributeDefinitions:
+        - AttributeName: OrderID
+          AttributeType: S
+        - AttributeName: ProductID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: OrderID
+          KeyType: HASH
+        - AttributeName: ProductID
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      GlobalSecondaryIndexes:
+        - IndexName: ProductIndex
+          KeySchema:
+            - AttributeName: ProductID
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+      TimeToLiveSpecification:
+        AttributeName: ExpirationTime
+        Enabled: true
+
+  # Create SNS Topic for Targeted Notifications
+  NotificationsTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      DisplayName: notifications-topic
+
+  # Define State Machine Using AWS Step Functions
+  OrderProcessingStateMachine:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      StateMachineName: order-processing-state-machine
+      DefinitionString:
+        # Define the state machine definition using Amazon State Language (ASL)
+
+  # Create CloudWatch Logs Group for Centralized Event Logging
+  CentralizedLogsGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: centralized-logs-group
+
+  # Define CloudWatch Events Rule for State Transitions
+  StateTransitionRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: state-transition-rule
+      EventPattern:
+        # Define the event pattern for state transitions
+      Targets:
+        - Arn: !GetAtt OrderProcessingStateMachine.Arn
+          Id: StateMachineTarget
+
+  # Create EventBridge Schema for Event-Driven Notifications
+  EventBridgeSchema:
+    Type: 'AWS::EventSchemas::Registry'
+    Properties:
+      Name: event-driven-registry
+      Description: Registry for event-driven notifications
+    DependsOn: CentralizedLogsGroup
+
+  # Create EventBridge Event Bus for Event Routing
+  EventBus:
+    Type: 'AWS::Events::EventBus'
+    Properties:
+      Name: event-driven-event-bus
+    DependsOn: CentralizedLogsGroup
+
+  # Define Resource Policy for EventBridge Event Bus
+  EventBusPolicy:
+    Type: 'AWS::Events::EventBusPolicy'
+    Properties:
+      EventBusName: !Ref EventBus
+      Condition: 'StringEquals'
+      StatementId: 'event-bus-policy-statement'
+      Action: 'events:PutEvents'
+      Principal: 'eventbridge.amazonaws.com'
+      Statement:
+        - Sid: 'event-bus-policy-statement'
+          Effect: 'Allow'
+          Action: 'events:PutEvents'
+          Principal:
+            Service: 'eventbridge.amazonaws.com'
+
+# Define Outputs for Resources
+Outputs:
+  SecureOrderUploadsBucketName:
+    Description: Name of the S3 bucket for secure order uploads
+    Value: !Ref SecureOrderUploadsBucket
+
+  OrderProcessingQueueURL:
+    Description: URL of the SQS queue for order processing
+    Value: !GetAtt OrderProcessingQueue.QueueUrl
+
+  OrderProcessingFunctionName:
+    Description: Name of the Lambda function for order processing
+    Value: !Ref OrderProcessingFunction
+
+  InventoryTableName:
+    Description: Name of the DynamoDB table for inventory management
+    Value: !Ref InventoryTable
+
+  NotificationsTopicARN:
+    Description: ARN of the SNS topic for notifications
+    Value: !Ref NotificationsTopic
+
+  OrderProcessingStateMachineARN:
+    Description: ARN of the Step Functions state machine
+    Value: !Ref OrderProcessingStateMachine
+
+  CentralizedLogsGroupName:
+    Description: Name of the centralized CloudWatch Logs group
+    Value: !Ref CentralizedLogsGroup
